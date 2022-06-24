@@ -13,7 +13,7 @@ APP_SECRET="$(openssl rand -hex 20)"
 # -----------------------------------------------------------------------------
 # packages
 # -----------------------------------------------------------------------------
-echo "installing token packages..."
+out <<< "installing token packages..."
 
 debconf-set-selections <<< \
     "jitsi-meet-tokens jitsi-meet-tokens/appid string $APP_ID"
@@ -29,7 +29,7 @@ timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-package-token" \
 # -----------------------------------------------------------------------------
 # configuration
 # -----------------------------------------------------------------------------
-echo "token configuration..."
+out <<< "token configuration..."
 
 # prosody
 sed -i '/\s*app_secret=/a \
@@ -57,10 +57,10 @@ timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-conf-token" \
 # -----------------------------------------------------------------------------
 # completed
 # -----------------------------------------------------------------------------
-#out <<EOF
-echo "Your App ID: $APP_ID"
-echo Your App Secret: $APP_SECRET"
-#EOF
+out <<EOF
+Your App ID: $APP_ID
+Your App Secret: $APP_SECRET
+EOF
 
 # token completed
 timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-token" \
