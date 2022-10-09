@@ -36,7 +36,7 @@ su -l
 apt-get update
 apt-get install wget
 
-wget -O jitsi-token-installer https://raw.githubusercontent.com/jitsi-contrib/installers/main/jitsi-token/jitsi-token-installer
+wget -T 10 -O jitsi-token-installer https://raw.githubusercontent.com/jitsi-contrib/installers/main/jitsi-token/jitsi-token-installer
 ```
 
 ### host addresses
@@ -57,3 +57,7 @@ export TURN_HOST=turn.yourdomain.com
 ```bash
 bash jitsi-token-installer
 ```
+
+### see also
+
+- [jitok](https://github.com/jitsi-contrib/jitok), Jitsi token generator

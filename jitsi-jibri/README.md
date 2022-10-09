@@ -10,6 +10,9 @@ installation to avoid potential problems.
 - Debian 10 Buster
 - Ubuntu 20.04 Focal Fossa
 
+The desktop environment must **not be installed** on the server. Otherwise
+`jibri` cannot use its own desktop.
+
 ## Usage
 
 - Don't use this script on a working production server.
@@ -37,7 +40,7 @@ su -l
 apt-get update
 apt-get install wget
 
-wget -O jitsi-jibri-installer https://raw.githubusercontent.com/jitsi-contrib/installers/main/jitsi-jibri/jitsi-jibri-installer
+wget -T 10 -O jitsi-jibri-installer https://raw.githubusercontent.com/jitsi-contrib/installers/main/jitsi-jibri/jitsi-jibri-installer
 ```
 
 ### host addresses

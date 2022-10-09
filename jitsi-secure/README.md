@@ -1,12 +1,12 @@
-# Jitsi Base Installer
+# Jitsi-Secure Installer
 
-`jitsi-base-installer` installs a simple standalone Jitsi server. This script
-guides the user during the installation to avoid potential problems.
+`jitsi-secure-installer` installs a standalone Jitsi server with
+`internal_hashed` authentication (_secure domain_). This script guides the user
+during the installation to avoid potential problems.
 
 ## Supported distributions
 
 - Debian 11 Bullseye
-- Debian 10 Buster
 - Ubuntu 20.04 Focal Fossa
 
 ## Usage
@@ -36,7 +36,7 @@ su -l
 apt-get update
 apt-get install wget
 
-wget -T 10 -O jitsi-base-installer https://raw.githubusercontent.com/jitsi-contrib/installers/main/jitsi-base/jitsi-base-installer
+wget -T 10 -O jitsi-secure-installer https://raw.githubusercontent.com/jitsi-contrib/installers/main/jitsi-secure/jitsi-secure-installer
 ```
 
 ### host addresses
@@ -55,5 +55,13 @@ export TURN_HOST=turn.yourdomain.com
 ### run the installer
 
 ```bash
-bash jitsi-base-installer
+bash jitsi-secure-installer
+```
+
+### add user accounts
+
+Add your admin user accounts using the following command:
+
+```bash
+prosodyctl register <USERNAME> <YOUR_DOMAIN> <PASSWORD>
 ```

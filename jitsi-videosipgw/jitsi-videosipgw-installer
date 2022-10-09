@@ -22,6 +22,16 @@ UDP=(5000 5349 10000)
 
 
 # -----------------------------------------------------------------------------
+# globals (extra)
+# -----------------------------------------------------------------------------
+JIBRI_TMPL=https://raw.githubusercontent.com/jitsi-contrib/installers/main/templates/jibri
+APP_ID="jitsi-$RANDOM"
+APP_SECRET="$(openssl rand -hex 20)"
+PJPROJECT_REPO="https://github.com/jitsi/pjproject"
+PJPROJECT_BRANCH="jibri-2.10-dev1"
+
+
+# -----------------------------------------------------------------------------
 # output format
 # -----------------------------------------------------------------------------
 out() {
@@ -178,6 +188,47 @@ Recommendation: Use different addresses for Jitsi and TURN
 
     export JITSI_HOST=jitsi.yourdomain.com
     export TURN_HOST=turn.yourdomain.com
+EOF
+    exit 1
+fi
+
+
+# -----------------------------------------------------------------------------
+# input check (extra)
+# -----------------------------------------------------------------------------
+# core
+out <<< "checking the number of cores..."
+CORES=$(nproc --all)
+if [[ "$CORES" -lt 4 ]]; then
+    out <<EOF
+Aborted! Not enough cores: $CORES
+Recommendation: It should be at least 4 cores
+EOF
+    exit 1
+fi
+
+# snd_aloop
+out <<< "checking the snd-aloop support..."
+
+if [[ "$DISTRO" = "focal" ]]; then
+    apt-get $APT_PROXY_OPTION -y install linux-modules-extra-$(uname -r) \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold"
+fi
+
+if [[ "$DISTRO" = "bullseye" ]] || \
+   [[ "$DISTRO" = "buster" ]]; then
+    KERNEL="linux-image-$(dpkg --print-architecture)"
+else
+    KERNEL="linux-image-generic"
+fi
+
+modprobe snd_aloop 2>/dev/null || true
+if [[ -z "$(grep snd_aloop /proc/modules)" ]]; then
+    out <<EOF
+Aborted! This kernel ($(uname -r)) does not support snd_aloop module.
+Recommendation: Install the standard Linux kernel package and reboot with it.
+                Probably it's the "$KERNEL" package in your case.
 EOF
     exit 1
 fi
@@ -457,6 +508,96 @@ timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-package" \
 
 
 # -----------------------------------------------------------------------------
+# packages (extra, token)
+# -----------------------------------------------------------------------------
+out <<< "installing token packages..."
+
+debconf-set-selections <<< \
+    "jitsi-meet-tokens jitsi-meet-tokens/appid string $APP_ID"
+debconf-set-selections <<< \
+    "jitsi-meet-tokens jitsi-meet-tokens/appsecret password $APP_SECRET"
+apt-get -y --allow-change-held-packages install jitsi-meet-tokens
+apt-mark hold jitsi-meet-tokens
+
+# token packages are ok
+timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-package-token" \
+    >/dev/null || true
+
+
+# -----------------------------------------------------------------------------
+# packages (extra, jibri)
+# -----------------------------------------------------------------------------
+out <<< "installing jibri packages..."
+
+if [[ "$DISTRO" = "bullseye" ]]; then
+    sed -i "s~ bullseye main$~ bullseye main contrib non-free~" \
+        /etc/apt/sources.list
+    sed -i "s~ bullseye-updates main$~ bullseye-updates main contrib non-free~" \
+        /etc/apt/sources.list
+    sed -i "s~ bullseye-security main$~ bullseye-security main contrib non-free~" \
+        /etc/apt/sources.list
+elif [[ "$DISTRO" = "buster" ]]; then
+    sed -i "s~ buster main$~ buster main contrib non-free~" \
+        /etc/apt/sources.list
+    sed -i "s~ buster-updates main$~ buster-updates main contrib non-free~" \
+        /etc/apt/sources.list
+    sed -i "s~ buster/updates main$~ buster/updates main contrib non-free~" \
+        /etc/apt/sources.list
+fi
+
+wget -T 10 -qO /tmp/google-chrome.gpg.key \
+    https://dl.google.com/linux/linux_signing_key.pub
+apt-key add /tmp/google-chrome.gpg.key
+wget -T 10 -O /etc/apt/sources.list.d/google-chrome.list \
+    $JIBRI_TMPL/etc/apt/sources.list.d/google-chrome.list
+
+apt-get -y --allow-releaseinfo-change update
+apt-get $APT_PROXY_OPTION -y install kmod alsa-utils
+apt-get $APT_PROXY_OPTION -y install libnss3-tools unzip unclutter
+apt-get $APT_PROXY_OPTION -y install va-driver-all vdpau-driver-all
+apt-get $APT_PROXY_OPTION -y --install-recommends install ffmpeg
+apt-get $APT_PROXY_OPTION -y --install-recommends install google-chrome-stable
+apt-mark hold google-chrome-stable
+
+CHROME_VER=$(dpkg -s google-chrome-stable | egrep "^Version" | \
+    cut -d " " -f2 | cut -d. -f1)
+CHROMEDRIVER_VER=$(curl -s \
+    https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VER)
+wget -T 10 -qO /tmp/chromedriver_linux64.zip \
+    https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VER/chromedriver_linux64.zip
+unzip -o /tmp/chromedriver_linux64.zip -d /usr/local/bin/
+chmod 755 /usr/local/bin/chromedriver
+
+apt-get $APT_PROXY_OPTION -y install x11vnc
+apt-get $APT_PROXY_OPTION -y install jibri
+apt-mark hold jibri
+
+apt-get -y purge upower
+apt-get -y --purge autoremove
+
+# jibri packages are ok
+timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-package-jibri" \
+    >/dev/null || true
+
+
+# -----------------------------------------------------------------------------
+# packages (extra, videosipgw)
+# -----------------------------------------------------------------------------
+out <<< "installing videosipgw packages..."
+
+apt-get -y install v4l2loopback-dkms v4l2loopback-utils
+apt-get -y install build-essential
+apt-get -y install libv4l-dev libsdl2-dev libavcodec-dev libavdevice-dev \
+    libavfilter-dev libavformat-dev libavresample-dev libavutil-dev \
+    libswresample-dev libswscale-dev libasound2-dev libopus-dev libvpx-dev
+
+# videosipgw packages are ok
+timeout 8 curl -s \
+    "$CHECKMYPORT?proto=udp&port=60000&text=ok-package-videosipgw" \
+    >/dev/null || true
+
+
+# -----------------------------------------------------------------------------
 # backup
 # -----------------------------------------------------------------------------
 # jitsi-meet
@@ -482,6 +623,80 @@ cp /etc/jitsi/videobridge/sip-communicator.properties \
 # nginx
 cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.org
 cp $NGINX_CONFIG $NGINX_CONFIG.org
+
+
+# -----------------------------------------------------------------------------
+# backup (extra)
+# -----------------------------------------------------------------------------
+cp /etc/modules /etc/modules.org
+cp /etc/hosts /etc/hosts.org
+
+# sip
+cp /opt/jitsi/jibri/pjsua.sh /opt/jitsi/jibri/pjsua.sh.org
+cp /opt/jitsi/jibri/finalize_sip.sh /opt/jitsi/jibri/finalize_sip.sh.org
+cp /etc/jitsi/jibri/pjsua.config /etc/jitsi/jibri/pjsua.config.org
+
+
+# -----------------------------------------------------------------------------
+# configuration (extra, jibri)
+# -----------------------------------------------------------------------------
+out <<< "jibri related configuration..."
+
+# snd_aloop
+[[ -z "$(egrep '^snd_aloop' /etc/modules)" ]] && echo snd_aloop >>/etc/modules
+
+# snd_aloop options (extra, videosipgw)
+wget -T 10 -O /etc/modprobe.d/alsa-loopback.conf \
+    $JIBRI_TMPL/etc/modprobe.d/alsa-loopback.conf
+
+modprobe snd-aloop
+
+# hosts
+sed -i -E "s/(\s)$JITSI_HOST/\1/" /etc/hosts
+sed -i -E "/^[0-9.]+\s*$/d" /etc/hosts
+sed -i "/127.0.2.1\s/d" /etc/hosts
+sed -i "$ a 127.0.2.1 $JITSI_HOST" /etc/hosts
+
+# google chrome
+mkdir -p /etc/opt/chrome/policies/managed
+wget -T 10 -O /etc/opt/chrome/policies/managed/jibri_policies.json \
+    $JIBRI_TMPL/etc/opt/chrome/policies/managed/jibri_policies.json
+
+
+# -----------------------------------------------------------------------------
+# configuration (extra, videosipgw)
+# -----------------------------------------------------------------------------
+out <<< "videosipgw related configuration..."
+
+# v4l2loopback options
+wget -T 10 -O /etc/modprobe.d/v4l2loopback.conf \
+    $JIBRI_TMPL/etc/modprobe.d/v4l2loopback.conf
+
+# v4l2loopback
+[[ -z "$(egrep '^v4l2loopback' /etc/modules)" ]] && \
+    echo v4l2loopback >>/etc/modules
+
+modprobe v4l2loopback
+
+# resolution 1280x720
+sed -ri "s/^(\s*)Virtual 1920/\1#Virtual 1920/" \
+    /etc/jitsi/jibri/xorg-video-dummy.conf
+sed -ri "s/^(\s*)#Virtual 1280/\1Virtual 1280/" \
+    /etc/jitsi/jibri/xorg-video-dummy.conf
+
+# xorg DISPLAY :1
+wget -T 10 -O /etc/systemd/system/sip-xorg.service \
+    $JIBRI_TMPL/etc/systemd/system/sip-xorg.service
+
+systemctl daemon-reload
+systemctl enable sip-xorg.service
+
+# icewm DISPLAY :1
+wget -T 10 -O /etc/systemd/system/sip-icewm.service \
+    $JIBRI_TMPL/etc/systemd/system/sip-icewm.service
+
+systemctl daemon-reload
+systemctl enable sip-icewm.service
 
 
 # -----------------------------------------------------------------------------
@@ -536,9 +751,39 @@ sed -i "s/^-- \(https_ports = { };\)/\1/" $PROSODY_CONFIG
 sed -i "/turns.*tcp/ s/host\s*=[^,]*/host = \"$TURN_HOST\"/" $PROSODY_CONFIG
 sed -i "/turns.*tcp/ s/5349/443/" $PROSODY_CONFIG
 
+# extra (token)
+wget -T 10 -O /usr/share/jitsi-meet/prosody-plugins/mod_token_affiliation.lua \
+    $PROSODY_PLUGINS/token_affiliation/mod_token_affiliation.lua
+
+sed -i '/\s*app_secret=/a \
+\    allow_empty_token = false' $PROSODY_CONFIG
+sed -i '/^Component .conference\./,/admins/!b; /\s*"token_verification"/a \
+\        "token_affiliation";' $PROSODY_CONFIG
+
+# extra (jibri, videosipgw)
+wget -T 10 -O /etc/prosody/conf.avail/sip.$JITSI_HOST.cfg.lua \
+    $JITSI_TMPL/etc/prosody/conf.avail/sip.cfg.lua
+sed -i "s/___JITSI_HOST___/$JITSI_HOST/" \
+    /etc/prosody/conf.avail/sip.$JITSI_HOST.cfg.lua
+ln -s ../conf.avail/sip.$JITSI_HOST.cfg.lua /etc/prosody/conf.d/
+
+sed -i -r "0,/^\s*admins/ s/(^\s*admins).*/\1 = { \
+\"focus@auth.$JITSI_HOST\", \
+\"sip@sip.$JITSI_HOST\" }/" \
+    $PROSODY_CONFIG
+
 # prosody restart
 systemctl daemon-reload
 systemctl restart prosody.service
+
+# prosody accounts (extra, jibri)
+PASSWD1=$(openssl rand -hex 20)
+PASSWD2=$(openssl rand -hex 20)
+
+prosodyctl unregister jibri auth.$JITSI_HOST || true
+prosodyctl register jibri auth.$JITSI_HOST $PASSWD1
+prosodyctl unregister sip sip.$JITSI_HOST || true
+prosodyctl register sip sip.$JITSI_HOST $PASSWD2
 
 # prosody config is ok
 timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-conf-prosody" \
@@ -559,11 +804,47 @@ sed -i '/^JICOFO_AUTH_PASSWORD=/a \
 JICOFO_MAX_MEMORY=3072m' \
     /etc/jitsi/jicofo/config
 
+# extra (token)
+hocon -f /etc/jitsi/jicofo/jicofo.conf \
+    set jicofo.conference.enable-auto-owner false
+
+# extra (videosipgw)
+hocon -f /etc/jitsi/jicofo/jicofo.conf \
+    set jicofo.jibri-sip.brewery-jid \
+    "\"SipBrewery@internal.auth.$JITSI_HOST\""
+
 # jicofo restart
 systemctl restart jicofo.service
 
 # jicofo config is ok
 timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-conf-jicofo" \
+    >/dev/null || true
+
+
+# -----------------------------------------------------------------------------
+# jitsi-meet (extra, token)
+# -----------------------------------------------------------------------------
+sed -i -r 's~//\s*(disableProfile).*~\1: true,~' $JITSI_MEET_CONFIG
+
+# jitsi-meet config is ok
+timeout 8 curl -s \
+    "$CHECKMYPORT?proto=udp&port=60000&text=ok-conf-jitsi-meet-token" \
+    >/dev/null || true
+
+
+# -----------------------------------------------------------------------------
+# jitsi-meet (extra, videosipgw)
+# -----------------------------------------------------------------------------
+sed -i "/^\s*disableProfile/a \
+\\
+\n\
+\    peopleSearchQueryTypes: ['conferenceRooms'],\n\
+\    peopleSearchUrl: 'https://$JITSI_HOST/get-dial-plan'," \
+    $JITSI_MEET_CONFIG
+
+# jitsi-meet config is ok
+timeout 8 curl -s \
+    "$CHECKMYPORT?proto=udp&port=60000&text=ok-conf-jitsi-meet-token" \
     >/dev/null || true
 
 
@@ -668,6 +949,130 @@ systemctl restart nginx.service
 
 # tls is ok
 timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-tls" \
+    >/dev/null || true
+
+
+# -----------------------------------------------------------------------------
+# jibri related (extra)
+# -----------------------------------------------------------------------------
+# icewm
+mkdir -p /home/jibri/.icewm
+wget -T 10 -O /home/jibri/.icewm/theme $JIBRI_TMPL/home/jibri/.icewm/theme
+wget -T 10 -O /home/jibri/.icewm/prefoverride \
+    $JIBRI_TMPL/home/jibri/.icewm/prefoverride
+wget -T 10 -O /home/jibri/.icewm/startup $JIBRI_TMPL/home/jibri/.icewm/startup
+chmod 755 /home/jibri/.icewm/startup
+
+# jibri
+chsh -s /bin/bash jibri
+usermod -aG adm,audio,video,plugdev jibri
+chown jibri:jibri /home/jibri
+
+wget -T 10 -O /etc/jitsi/jibri/jibri.conf \
+    $JIBRI_TMPL/etc/jitsi/jibri/jibri.videosipgw.conf
+sed -i "s/___JITSI_HOST___/$JITSI_HOST/" /etc/jitsi/jibri/jibri.conf
+sed -i "s/___PASSWD1___/$PASSWD1/" /etc/jitsi/jibri/jibri.conf
+sed -i "s/___PASSWD2___/$PASSWD2/" /etc/jitsi/jibri/jibri.conf
+
+wget -T 10 -O /usr/local/bin/ffmpeg $JIBRI_TMPL/usr/local/bin/ffmpeg
+chmod 755 /usr/local/bin/ffmpeg
+
+systemctl daemon-reload
+systemctl enable jibri.service
+systemctl start jibri.service
+
+# jibri, vnc
+mkdir -p /home/jibri/.vnc
+x11vnc -storepasswd jibri /home/jibri/.vnc/passwd
+chown jibri:jibri /home/jibri/.vnc -R
+
+# jibri, Xdefaults
+wget -T 10 -O /home/jibri/.Xdefaults $JIBRI_TMPL/home/jibri/.Xdefaults
+chown jibri:jibri /home/jibri/.Xdefaults
+
+# jibri configuration is ok
+timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-conf-jibri" \
+    >/dev/null || true
+
+
+# -----------------------------------------------------------------------------
+# SIP dialing plan (extra)
+# -----------------------------------------------------------------------------
+# deno
+cd /tmp
+wget -T 30 -O deno.zip \
+    https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip
+unzip -o deno.zip
+cp /tmp/deno /usr/local/bin/
+
+# sip-dial-plan
+su -l jibri <<EOS
+set -e
+
+git clone https://github.com/jitsi-contrib/sip-dial-plan.git
+EOS
+
+sed -i "/TOKEN_SECRET/ s/\".*\"/\"$APP_SECRET\"/" \
+    /home/jibri/sip-dial-plan/config.ts
+
+# sip-dial-plan systemd service
+wget -T 10 -O /etc/systemd/system/sip-dial-plan.service \
+    $JIBRI_TMPL/etc/systemd/system/sip-dial-plan.service
+
+systemctl daemon-reload
+systemctl enable sip-dial-plan.service
+systemctl start sip-dial-plan.service
+
+
+# -----------------------------------------------------------------------------
+# PJSUA related (extra)
+# -----------------------------------------------------------------------------
+# build
+mkdir /home/jibri/src
+chown jibri:jibri /home/jibri/src
+
+su -l jibri <<EOS
+set -e
+
+cd ~/src
+
+git clone -b $PJPROJECT_BRANCH $PJPROJECT_REPO
+cd pjproject
+
+./configure
+make dep
+make
+EOS
+
+cp /home/jibri/src/pjproject/pjsip-apps/bin/pjsua-x86_64-unknown-linux-gnu \
+    /usr/local/bin/pjsua
+chmod 755 /usr/local/bin/pjsua
+
+# pjsua scripts
+wget -T 10 -O /opt/jitsi/jibri/pjsua.sh $JIBRI_TMPL/opt/jitsi/jibri/pjsua.sh
+wget -T 10 -O /opt/jitsi/jibri/finalize_sip.sh \
+    $JIBRI_TMPL/opt/jitsi/jibri/finalize_sip.sh
+
+# fake google-chrome
+wget -T 10 -O /usr/local/bin/google-chrome \
+    $JIBRI_TMPL/usr/local/bin/google-chrome.videosipgw
+chmod 755 /usr/local/bin/google-chrome
+
+# pjsua configuration is ok
+timeout 8 curl -s "$CHECKMYPORT?proto=udp&port=60000&text=ok-conf-pjsua" \
+    >/dev/null || true
+
+
+# -----------------------------------------------------------------------------
+# completed (extra)
+# -----------------------------------------------------------------------------
+out <<EOF
+Your App ID: $APP_ID
+Your App Secret: $APP_SECRET
+EOF
+
+timeout 8 curl -s \
+    "$CHECKMYPORT?proto=udp&port=60000&text=ok-jitsi-videosipgw" \
     >/dev/null || true
 
 
